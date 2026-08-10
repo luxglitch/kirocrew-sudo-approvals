@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Request dashboard approval before invoking the platform sudo command.
+set -euo pipefail
+
+user_key="$(id -u)"
+if [[ -n "${SUDO_APPROVAL_RUNTIME_DIR:-}" ]]; then
+  runtime_dir="$SUDO_APPROVAL_RUNTIME_DIR"
+else
+  runtime_dir="$(python3 - "${BASH_SOURCE[0]}" "$user_key" <<'PY'
+import hashlib
+import os
+import sys
+from pathlib import Path
+
+script_root = Path(sys.argv[1]).resolve().parent.parent
+if (script_root / "app.json").is_file():
+    app_root = script_root
+else:
+    crew_home = Path(
+        os.environ.get("KIROCREW_HOME", Path.home() / ".kiro" / "crew")
+    )
+    app_root = crew_home / "apps" / "sudo-approvals"
+canonical_root = os.path.realpath(os.fspath(app_root))
+instance_key = hashlib.sha256(os.fsencode(canonical_root)).hexdigest()[:12]
+print(f"/tmp/sudo-approvals-{sys.argv[2]}-{instance_key}")
+PY
+)"
+fi
+request_fifo="${SUDO_APPROVAL_REQUEST_FIFO:-${runtime_dir}/request.fifo}"
+response_fifo="${SUDO_APPROVAL_RESPONSE_FIFO:-${runtime_dir}/response.fifo}"
+
+if [[ ! -p "$request_fifo" ]] || [[ ! -p "$response_fifo" ]]; then
+  echo "sudo-with-approval: approval service is unavailable (FIFO missing)" >&2
+  exit 1
+fi
+
+{
+  printf '\n'
+  printf '════ privileged request @ %s ════\n' "$(date +%H:%M:%S)"
+  printf '  CMD: sudo'
+  printf ' %q' "$@"
+  printf '\n'
+  printf '  CWD: %s\n\n' "$PWD"
+} >"$request_fifo"
+
+reply=""
+IFS= read -r reply <"$response_fifo" || true
+if [[ "$reply" != "y" && "$reply" != "Y" ]]; then
+  echo "sudo-with-approval: denied" >&2
+  exit 1
+fi
+
+exec sudo -A "$@"

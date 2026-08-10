@@ -1,0 +1,136 @@
+name: CI and Release
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-release-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  validate:
+    name: Validate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - macos-15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Run backend tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python3 -B -m unittest -v backend/test_server.py
+
+      - name: Validate source formats
+        run: |
+          node --check ui/index.mjs
+          bash -n bin/sudo-with-approval
+          python3 -m json.tool app.json >/dev/null
+          test -x bin/sudo-with-approval
+
+      - name: Audit public package boundary
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          release_files = (
+              Path(".gitignore"),
+              Path("LICENSE"),
+              Path("README.md"),
+              Path("app.json"),
+              Path("backend/server.py"),
+              Path("backend/test_server.py"),
+              Path("bin/sudo-with-approval"),
+              Path("ui/index.mjs"),
+          )
+          forbidden_text = (
+              "nun" + "leym",
+              "/" + "home/",
+              "clau" + "de",
+              "clau" + "de-sudo",
+          )
+          forbidden_paths = (
+              Path(".app_secret"),
+              Path("installed.json"),
+              Path("data"),
+              Path("backend/__pycache__"),
+          )
+
+          missing = [str(path) for path in release_files if not path.is_file()]
+          present = [str(path) for path in forbidden_paths if path.exists()]
+          matches = []
+          for path in release_files:
+              if not path.is_file():
+                  continue
+              text = path.read_text(encoding="utf-8").lower()
+              matches.extend(
+                  f"{path}: {needle}" for needle in forbidden_text if needle in text
+              )
+
+          if missing or present or matches:
+              raise SystemExit(
+                  f"missing={missing}; forbidden_paths={present}; forbidden_text={matches}"
+              )
+          PY
+
+  release:
+    name: Publish release archives
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: validate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Verify tag matches manifest version
+        run: |
+          manifest_version="$(python3 -c 'import json; print(json.load(open("app.json"))["version"])')"
+          tag_version="${GITHUB_REF_NAME#v}"
+          test "$manifest_version" = "$tag_version" || {
+            echo "Tag $GITHUB_REF_NAME does not match manifest version $manifest_version" >&2
+            exit 1
+          }
+
+      - name: Build archives and checksums
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          archive_root="sudo-approvals"
+          stage="staging/$archive_root"
+          mkdir -p "$stage/backend" "$stage/bin" "$stage/ui" dist
+          cp -a .gitignore LICENSE README.md app.json "$stage/"
+          cp -a backend/server.py backend/test_server.py "$stage/backend/"
+          cp -a bin/sudo-with-approval "$stage/bin/"
+          cp -a ui/index.mjs "$stage/ui/"
+          tar -C staging -czf "dist/sudo-approvals-v${version}.tar.gz" "$archive_root"
+          (cd staging && zip -qr "../dist/sudo-approvals-v${version}.zip" "$archive_root")
+          (cd dist && sha256sum ./*.tar.gz ./*.zip >SHA256SUMS)
+          cat dist/SHA256SUMS
+
+      - name: Publish GitHub release
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "Sudo Approvals $GITHUB_REF_NAME" \
+              --generate-notes \
+              --verify-tag
+          fi

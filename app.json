@@ -1,0 +1,39 @@
+{
+  "name": "sudo-approvals",
+  "version": "0.2.0",
+  "displayName": "Sudo Approvals",
+  "description": "Review privileged command requests in KiroCrew or arm a bounded auto-approval window.",
+  "author": "Sudo Approvals contributors",
+  "tags": ["security", "sudo", "approvals", "ops"],
+  "highlights": [
+    "Shows the exact command and working directory before a manual approval",
+    "Supports server-enforced 5 minute, 15 minute, 30 minute, 1 hour, and 2 hour auto-approval windows",
+    "Uses a generic configurable FIFO protocol that can be integrated with any local command wrapper",
+    "Verifies every gateway proxy request with a per-installation HMAC secret"
+  ],
+  "defaultEnabled": false,
+  "minKiroCrewVersion": "0.1.3",
+  "platform": {
+    "os": ["linux", "macos"]
+  },
+  "permissions": {
+    "api": ["/apps/sudo-approvals", "/api/apps/sudo-approvals", "/api/apps/sudo-approvals/*"],
+    "network": false,
+    "storage": false
+  },
+  "backend": {
+    "entryPoint": "backend/server.py",
+    "port": "auto",
+    "healthCheck": "/health"
+  },
+  "ui": {
+    "entry": "index.mjs",
+    "pages": [
+      {
+        "route": "/apps/sudo-approvals",
+        "label": "Sudo Approvals",
+        "icon": "ShieldCheck"
+      }
+    ]
+  }
+}
