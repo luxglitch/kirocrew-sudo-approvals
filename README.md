@@ -15,7 +15,11 @@ This is not an official KiroCrew distribution. The installed app name remains
 - Offers bounded auto-approval windows of **5 minutes, 15 minutes, 30 minutes,
   1 hour, or 2 hours**.
 - Labels unattended decisions as `AUTO-APPROVED` in Recent history.
-- Includes a generic `sudo-with-approval` wrapper with configurable FIFO paths.
+- Ships the `kiro-sudo` command wrapper (plus the generic `sudo-with-approval`)
+  with configurable FIFO paths.
+- **Deploys `kiro-sudo` to `~/.local/bin` automatically when the app is enabled**,
+  so the approval gate is actually usable -- not just a backend listening with no
+  wrapper on `PATH`.
 - Runs without a fixed backend port or KiroCrew-internal Python imports.
 
 ## Important security warning
@@ -43,13 +47,14 @@ git clone https://github.com/luxglitch/kirocrew-sudo-approvals.git
 cd kirocrew-sudo-approvals
 kirocrew app install "$PWD"
 kirocrew app enable sudo-approvals
-mkdir -p "$HOME/.local/bin"
-install -m 755 bin/sudo-with-approval "$HOME/.local/bin/sudo-with-approval"
 ```
 
-Ensure `$HOME/.local/bin` is on the automation tool's `PATH`. If the KiroCrew
-gateway was already running during installation, restart it so stable KiroCrew
-`0.1.3` launches the new backend. Confirm the app is healthy before routing any
+Enabling the app starts the backend, which **auto-deploys `kiro-sudo` to
+`$HOME/.local/bin`** (idempotent; it never clobbers a foreign file of the same
+name -- that is backed up to `kiro-sudo.pre-kiro-sudo.bak`). Ensure
+`$HOME/.local/bin` is on the automation tool's `PATH`. If the KiroCrew gateway
+was already running during installation, restart it so stable KiroCrew `0.1.3`
+launches the new backend. Confirm the app is healthy before routing any
 privileged command through the wrapper.
 
 The full-page app works through KiroCrew's documented `AppHost` API and does not
@@ -59,15 +64,17 @@ for a new pending request. This repository does not modify KiroCrew core.
 
 ## Use the wrapper
 
-Configure the automation tool to call `sudo-with-approval` instead of `sudo`:
+Configure the automation tool to call `kiro-sudo` instead of `sudo`:
 
 ```bash
-sudo-with-approval systemctl status example.service
+kiro-sudo systemctl status example.service
 ```
 
 The wrapper writes the request, waits for an exact `y` or `n` response, and
 only invokes `sudo -A` after approval. It fails closed if the approval service
-or FIFOs are unavailable.
+or FIFOs are unavailable. (`bin/sudo-with-approval` ships as a vendor-neutral
+equivalent with identical behavior, but only `kiro-sudo` is auto-deployed to
+`PATH`; symlink or copy `sudo-with-approval` yourself if you prefer that name.)
 
 ## Auto-approval windows
 
@@ -139,6 +146,7 @@ kirocrew-sudo-approvals/
 │   ├── server.py
 │   └── test_server.py
 ├── bin/
+│   ├── kiro-sudo
 │   └── sudo-with-approval
 └── ui/
     └── index.mjs
@@ -152,6 +160,7 @@ Run the local checks with:
 ```bash
 python3 -B -m unittest -v backend/test_server.py
 node --check ui/index.mjs
+bash -n bin/kiro-sudo
 bash -n bin/sudo-with-approval
 python3 -m json.tool app.json >/dev/null
 ```

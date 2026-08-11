@@ -196,5 +196,67 @@ class ProxyVerificationTests(unittest.TestCase):
             server.PROXY_SECRET = original
 
 
+class DeployWrapperTests(unittest.TestCase):
+    def _fake_app(self, root: pathlib.Path) -> pathlib.Path:
+        bin_dir = root / "bin"
+        bin_dir.mkdir(parents=True)
+        src = bin_dir / "kiro-sudo"
+        src.write_text("#!/usr/bin/env bash\n# kiro-sudo\nexit 0\n")
+        src.chmod(0o644)
+        return src
+
+    def test_deploys_symlink_to_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory, "app")
+            src = self._fake_app(root)
+            target = pathlib.Path(directory, "bin")
+            dest = server.deploy_wrapper(str(root), str(target))
+            self.assertEqual(dest, str(target / "kiro-sudo"))
+            self.assertTrue(os.path.islink(dest))
+            self.assertEqual(os.path.realpath(dest), os.path.realpath(src))
+            self.assertTrue(os.access(src, os.X_OK))  # chmod +x applied
+
+    def test_idempotent_when_already_ours(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory, "app")
+            self._fake_app(root)
+            target = pathlib.Path(directory, "bin")
+            first = server.deploy_wrapper(str(root), str(target))
+            second = server.deploy_wrapper(str(root), str(target))
+            self.assertEqual(first, second)
+            self.assertTrue(os.path.islink(second))
+
+    def test_replaces_prior_copy_of_ours(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory, "app")
+            self._fake_app(root)
+            target = pathlib.Path(directory, "bin")
+            target.mkdir()
+            (target / "kiro-sudo").write_text("#!/usr/bin/env bash\n# kiro-sudo old copy\n")
+            dest = server.deploy_wrapper(str(root), str(target))
+            self.assertTrue(os.path.islink(dest))  # upgraded to a live symlink
+
+    def test_never_clobbers_foreign_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory, "app")
+            self._fake_app(root)
+            target = pathlib.Path(directory, "bin")
+            target.mkdir()
+            foreign = target / "kiro-sudo"
+            foreign.write_text("#!/bin/sh\necho not ours\n")
+            dest = server.deploy_wrapper(str(root), str(target))
+            self.assertTrue(os.path.islink(dest))
+            backup = target / "kiro-sudo.pre-kiro-sudo.bak"
+            self.assertTrue(backup.is_file())
+            self.assertIn("not ours", backup.read_text())
+
+    def test_noop_without_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory, "app")
+            root.mkdir()
+            target = pathlib.Path(directory, "bin")
+            self.assertEqual(server.deploy_wrapper(str(root), str(target)), "")
+
+
 if __name__ == "__main__":
     unittest.main()

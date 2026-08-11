@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# kiro-sudo -- request KiroCrew dashboard approval before running a privileged
+# command. Part of the Sudo Approvals app; speaks the app's request/response
+# FIFO protocol. On approval it hands the command to the platform `sudo`.
+#
+# Resolution order for the runtime FIFO dir:
+#   1. $SUDO_APPROVAL_RUNTIME_DIR (explicit override)
+#   2. if this script lives inside the app tree (../app.json), use that root
+#   3. else $KIROCREW_HOME/apps/sudo-approvals (default install location)
+set -euo pipefail
+
+if [[ $# -eq 0 ]]; then
+  echo "usage: kiro-sudo <command> [args...]" >&2
+  exit 2
+fi
+
+user_key="$(id -u)"
+if [[ -n "${SUDO_APPROVAL_RUNTIME_DIR:-}" ]]; then
+  runtime_dir="$SUDO_APPROVAL_RUNTIME_DIR"
+else
+  runtime_dir="$(python3 - "${BASH_SOURCE[0]}" "$user_key" <<'PY'
+import hashlib
+import os
+import sys
+from pathlib import Path
+
+script_root = Path(sys.argv[1]).resolve().parent.parent
+if (script_root / "app.json").is_file():
+    app_root = script_root
+else:
+    crew_home = Path(
+        os.environ.get("KIROCREW_HOME", Path.home() / ".kiro" / "crew")
+    )
+    app_root = crew_home / "apps" / "sudo-approvals"
+canonical_root = os.path.realpath(os.fspath(app_root))
+instance_key = hashlib.sha256(os.fsencode(canonical_root)).hexdigest()[:12]
+print(f"/tmp/sudo-approvals-{sys.argv[2]}-{instance_key}")
+PY
+)"
+fi
+request_fifo="${SUDO_APPROVAL_REQUEST_FIFO:-${runtime_dir}/request.fifo}"
+response_fifo="${SUDO_APPROVAL_RESPONSE_FIFO:-${runtime_dir}/response.fifo}"
+
+if [[ ! -p "$request_fifo" ]] || [[ ! -p "$response_fifo" ]]; then
+  echo "kiro-sudo: approval service unavailable (FIFO missing under $runtime_dir)." >&2
+  echo "kiro-sudo: enable the Sudo Approvals app in the KiroCrew dashboard, then retry." >&2
+  exit 1
+fi
+
+{
+  printf '\n'
+  printf '════ privileged request @ %s ════\n' "$(date +%H:%M:%S)"
+  printf '  CMD: sudo'
+  printf ' %q' "$@"
+  printf '\n'
+  printf '  CWD: %s\n\n' "$PWD"
+} >"$request_fifo"
+
+reply=""
+IFS= read -r reply <"$response_fifo" || true
+if [[ "$reply" != "y" && "$reply" != "Y" ]]; then
+  echo "kiro-sudo: denied via dashboard" >&2
+  exit 1
+fi
+
+exec sudo -A "$@"
