@@ -1,12 +1,13 @@
 {
   "name": "sudo-approvals",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "displayName": "Sudo Approvals",
   "description": "Review privileged command requests in KiroCrew or arm a bounded auto-approval window.",
   "author": "Sudo Approvals contributors",
   "tags": ["security", "sudo", "approvals", "ops"],
   "highlights": [
     "Shows the exact command and working directory before a manual approval",
+    "Deploys the kiro-sudo command wrapper to your PATH on enable, so the approval gate is active (not just a backend listening)",
     "Supports server-enforced 5 minute, 15 minute, 30 minute, 1 hour, and 2 hour auto-approval windows",
     "Uses a generic configurable FIFO protocol that can be integrated with any local command wrapper",
     "Verifies every gateway proxy request with a per-installation HMAC secret"

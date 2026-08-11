@@ -329,8 +329,56 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+def deploy_wrapper(app_root: str = APP_ROOT, target_dir: str = "") -> str:
+    """Put the ``kiro-sudo`` wrapper on the user's PATH when the app starts.
+
+    The approval gate only exists if a wrapper is actually installed and used
+    instead of bare ``sudo``. Enabling the app starts this backend, so we deploy
+    the wrapper here -- otherwise an install leaves the backend listening with no
+    wrapper on PATH, giving a false sense of gating. Best-effort and idempotent:
+    it never clobbers a foreign file and never raises into startup.
+
+    Returns the destination path on success, or "" if nothing was deployed.
+    """
+    src = os.path.join(app_root, "bin", "kiro-sudo")
+    if not os.path.isfile(src):
+        return ""
+    try:
+        os.chmod(src, 0o755)
+    except OSError:
+        pass
+    if not target_dir:
+        target_dir = os.path.join(os.path.expanduser("~"), ".local", "bin")
+    os.makedirs(target_dir, exist_ok=True)
+    dest = os.path.join(target_dir, "kiro-sudo")
+
+    if os.path.islink(dest):
+        if os.path.realpath(dest) == os.path.realpath(src):
+            return dest  # already ours, nothing to do
+        os.unlink(dest)
+    elif os.path.exists(dest):
+        first_line = ""
+        try:
+            with open(dest, "r", encoding="utf-8", errors="replace") as handle:
+                first_line = handle.readline() + handle.readline()
+        except OSError:
+            pass
+        if "kiro-sudo" in first_line or "sudo-with-approval" in first_line:
+            os.unlink(dest)  # a prior copy of ours -> replace with a live symlink
+        else:
+            os.replace(dest, dest + ".pre-kiro-sudo.bak")  # never clobber foreign
+    os.symlink(src, dest)
+    return dest
+
+
 def main():
     ensure_fifos()
+    try:
+        dest = deploy_wrapper()
+        if dest:
+            print(f"{APP_NAME}: kiro-sudo wrapper available at {dest}", flush=True)
+    except Exception as exc:  # never let wrapper deploy break the backend
+        print(f"{APP_NAME}: kiro-sudo deploy skipped ({exc})", flush=True)
     threading.Thread(target=reader_loop, daemon=True).start()
     threading.Thread(target=keepalive_loop, daemon=True).start()
     print(
