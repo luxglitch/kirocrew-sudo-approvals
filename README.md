@@ -72,8 +72,9 @@ kiro-sudo systemctl status example.service
 
 The wrapper writes the request, waits for an exact `y` or `n` response, and
 only invokes `sudo -A` after approval. It fails closed if the approval service
-or FIFOs are unavailable. (`sudo-with-approval` remains available as a
-vendor-neutral alias with identical behavior.)
+or FIFOs are unavailable. (`bin/sudo-with-approval` ships as a vendor-neutral
+equivalent with identical behavior, but only `kiro-sudo` is auto-deployed to
+`PATH`; symlink or copy `sudo-with-approval` yourself if you prefer that name.)
 
 ## Auto-approval windows
 
